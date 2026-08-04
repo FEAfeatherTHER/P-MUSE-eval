@@ -1,23 +1,21 @@
-# P-MUSE Eval
+# P-MUSE-eval
 
-P-MUSE Eval evaluates generated WAV files on three public MIDI-to-audio
-benchmarks:
+P-MUSE-eval evaluates generated WAV files on three public MIDI-to-audio benchmarks:
 
-- `benchmark_paired`: paired audio and MIDI context.
-- `benchmark_style`: an audio style prompt without prompt MIDI.
-- `benchmark_mixed`: a style prompt plus paired content context.
+- `benchmark_paired`: paired audio and MIDI prompt.
+- `benchmark_style`: an audio-only prompt without prompt MIDI.
+- `benchmark_mixed`: a style prompt plus paired prompt.
 
-Each benchmark has 400 generation records and 400 editing records. Every
-editing record has five variants, so one complete editing submission contains
-2,000 WAV files.
+Each benchmark contains 400 recordings for generation and editing. For each recording, the generation and editing tasks use different target regions or clips. A complete submission therefore contains 400 recordings for generation and 2,000 recordings for editing (five edit variants).
 
 The P-MUSE-eval toolkit reports two metrics:
 
 1. Instrument embedding cosine similarity.
 2. Onset F1 with a 50 ms tolerance.
 
-For benchmark construction and metric details, see our paper
-[P-MUSE: Prompt-MIDI-Optional Model for Unified Instrumental Music Synthesis and Editing](https://arxiv.org/abs/2608.01920).
+For more benchmark construction and metric details, see our paper [P-MUSE: Prompt-MIDI-Optional Model for Unified Instrumental Music Synthesis and Editing](https://arxiv.org/abs/2608.01920). Thank you for your interest in this project. Due to corporate compliance and confidentiality policies, we are currently unable to open-source the full codebase of P-MUSE. 
+
+Feel free to reach out via [Email](mailto:chongjing@link.cuhk.edu.cn) for discussions.
 
 ## Downloads
 
@@ -28,9 +26,7 @@ For benchmark construction and metric details, see our paper
 
 ## P-MUSE-eval-teatset
 
-Extract `P-MUSE-eval-testset` before running the P-MUSE-eval toolkit. Each benchmark has
-400 records divided into `bass`, `drum`,
-`guitar`, and `piano` families.
+Extract `P-MUSE-eval-testset` before running the P-MUSE-eval toolkit. Each benchmark has 400 recordings divided into `bass`, `drum`, `guitar`, and `piano` families.
 
 ```text
 P-MUSE-eval-testset/
@@ -57,23 +53,13 @@ Each of the three benchmark directories has the following structure:
       edit/<record_id>.wav
 ```
 
-- `benchmark_gen.jsonl/benchmark_edit.jsonl` lists the records for generation and editing, including related audio and MIDI paths, time splits for target and prompt and 'record_id'.
-- `metadata.jsonl` records the source dataset, instrument family, and instrument name for each `record_id`.
+- `benchmark_gen.jsonl/benchmark_edit.jsonl` lists the recordings for generation and editing, including related audio and MIDI paths, time splits for target and prompt and `record_id`.
+- `metadata.jsonl` contains the source dataset, instrument family, and instrument name for each `record_id`.
 - The four instrument-family directories contain the audio and MIDI assets referenced by the JSONL files.
 - `edited_midi/<family>/<record_id>/` contains `target_original.mid`, the five edited varients for target MIDI files, and `prefix.mid` and `suffix.mid`.
 - `ref_audio/` contains target reference audio. These files are testset references, not generated submissions.
 
-The benchmark inputs differ as follows:
 
-
-| Benchmark          | Generation and editing inputs                                                                                      |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `benchmark_paired` | Audio and MIDI from the same performance. JSONL time fields select the prompt, target, prefix, and suffix regions. |
-| `benchmark_style`  | A style-prompt WAV without prompt MIDI, plus target MIDI. Editing uses separate prefix and suffix WAV clips.       |
-| `benchmark_mixed`  | Paired audio-MIDI context together with an additional style-prompt audio region.                                   |
-
-
-Set `TESTSET` to the extracted `P-MUSE-eval-testset` directory.
 
 ## P-MUSE-output structure
 
@@ -92,15 +78,9 @@ P-MUSE-out/
     edit/<record_id>__<variant>.wav
 ```
 
-Each benchmark contains 400 generation WAVs and 2,000 editing WAVs. A
-generation filename is `<record_id>.wav`. An editing filename is
-`<record_id>__<variant>.wav`, where `<variant>` is `add`, `delete`,
-`pitch_shift`, `velocity_scale`, or `timing`.
+Each benchmark contains 400 generation WAVs and 2,000 editing WAVs. A generation filename is `<record_id>.wav`. An editing filename is `<record_id>__<variant>.wav`, where `<variant>` is `add`, `delete`, `pitch_shift`, `velocity_scale`, or `timing`.
 
-Each editing WAV contains the complete `prefix + edited target + suffix`
-output, rather than only the edited target. The toolkit scores only the edited
-target interval. Outputs from another system must follow the same
-layout and naming rules.
+Each editing WAV contains the complete `prefix + edited target + suffix` output, rather than only the edited target. The toolkit scores only the edited target interval. Outputs from another system must follow the same layout and naming rules.
 
 ## Installation
 
@@ -125,9 +105,7 @@ git clone https://github.com/Alexuan/musical_instrument_embedding \
   /path/to/musical_instrument_embedding
 ```
 
-P-MUSE Eval uses the YourMT3 `YPTF+Single (noPS)` model. No other
-YourMT3 checkpoint is needed. Git LFS is
-required.
+P-MUSE Eval uses the YourMT3 `YPTF+Single (noPS)` model. No other YourMT3 checkpoint is needed. Git LFS is required.
 
 Paper: [YourMT3+: Multi-instrument Music Transcription with Enhanced Transformer Architectures and Cross-dataset Stem Augmentation](https://arxiv.org/abs/2407.04822)
 
@@ -164,8 +142,7 @@ All four step switches default to `1`.
 
 ### Evaluate one benchmark and task
 
-Set `BENCHMARK` to `benchmark_paired`, `benchmark_style`, or
-`benchmark_mixed`, and set `TASK` to `gen` or `edit`. For example:
+Set `BENCHMARK` to `benchmark_paired`, `benchmark_style`, or `benchmark_mixed`, and set `TASK` to `gen` or `edit`. For example:
 
 ```bash
 BENCHMARK=benchmark_paired TASK=gen bash run_eval.sh
@@ -194,9 +171,6 @@ The script runs enabled steps in this order:
 3. Transcribe audio with YourMT3.
 4. Compute Onset F1.
 
-YourMT3 transcribes only the submitted generated audio. For generation this is
-one WAV per record; for editing it is one WAV per edit variant. Transcriptions
-and their cache records are stored under
-`<GENERATED_MIDI>/<benchmark>/<task>/`.
+YourMT3 transcribes only the submitted generated audio. For generation this is one WAV per recording; for editing it is one WAV per edit variant. Transcriptions and their cache records are stored under `<GENERATED_MIDI>/<benchmark>/<task>/`.
 
 Instrument similarity is computed between target and prompt regions. Onset F1 requires the MIDI and cache records produced by the transcription step.
