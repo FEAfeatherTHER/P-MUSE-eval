@@ -111,7 +111,7 @@ def evaluate_offset(
                 if evidence is not None:
                     transcription_error = f"generated_{evidence}"
             if transcription_error is None:
-                status, score, error = _score_pair(
+                status, score, error, _ = _score_pair(
                     ref_path,
                     gen_path,
                     ref_window,

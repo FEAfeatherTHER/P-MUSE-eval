@@ -118,29 +118,38 @@ def _score_pair(
     match_pitch: bool,
     interval_loader: Callable[[Path, float, float, float], MidiNotes | MidiIntervals],
     interval_scorer: Callable[..., dict[str, float]],
-) -> tuple[str, dict[str, float] | None, str | None]:
+) -> tuple[str, dict[str, float] | None, str | None, bool | None]:
     if not ref_path.is_file():
-        return "missing_reference_midi", None, None
+        return "missing_reference_midi", None, None, None
     if not gen_path.is_file():
-        return "missing_generated_midi", None, None
+        return "missing_generated_midi", None, None, None
     reference = interval_loader(ref_path, *ref_window)
     if reference.status != "ok":
-        return f"reference_{reference.status}", None, reference.error
+        return f"reference_{reference.status}", None, reference.error, None
     generated = interval_loader(gen_path, *gen_window)
     if generated.status != "ok":
-        return f"generated_{generated.status}", None, generated.error
+        return f"generated_{generated.status}", None, generated.error, None
     try:
         legacy_loader = isinstance(reference, MidiIntervals) or isinstance(
             generated, MidiIntervals,
         )
-        if legacy_loader and _supports_pitched_scorer(interval_scorer):
+        pitched_scorer = _supports_pitched_scorer(interval_scorer)
+        if legacy_loader and interval_scorer is score_note_onsets:
             return "ok", score_interval_onsets(
                 reference.intervals, generated.intervals, onset_tolerance,
-            ), None
-        if legacy_loader or not _supports_pitched_scorer(interval_scorer):
+            ), None, False
+        if legacy_loader and pitched_scorer:
+            return (
+                "score_error",
+                None,
+                "legacy interval_loader does not provide MIDI pitches required "
+                "by pitched interval_scorer",
+                None,
+            )
+        if not pitched_scorer:
             return "ok", interval_scorer(
                 reference.intervals, generated.intervals, onset_tolerance,
-            ), None
+            ), None, False
         return "ok", interval_scorer(
             reference.intervals,
             reference.pitches,
@@ -148,9 +157,9 @@ def _score_pair(
             generated.pitches,
             onset_tolerance,
             match_pitch,
-        ), None
+        ), None, bool(match_pitch)
     except Exception as exc:
-        return "score_error", None, str(exc)
+        return "score_error", None, str(exc), bool(match_pitch)
 
 
 def _mean_scores(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -305,12 +314,12 @@ def evaluate_onset(
                 if evidence is not None:
                     transcription_error = f"generated_{evidence}"
             if transcription_error is None:
-                status, score, error = _score_pair(
+                status, score, error, actual_match_pitch = _score_pair(
                     ref_path, gen_path, ref_window, gen_window, onset_tolerance, match_pitch,
                     interval_loader, interval_scorer,
                 )
             else:
-                status, score, error = transcription_error, None, None
+                status, score, error, actual_match_pitch = transcription_error, None, None, None
             item: dict[str, Any] = {
                 "record_id": record_id,
                 "family": family,
@@ -324,15 +333,24 @@ def evaluate_onset(
                 item["target_end_sec"] = gen_window[1]
             if score is not None:
                 item.update(score)
+            if actual_match_pitch is not None:
+                item["match_pitch"] = actual_match_pitch
             if error:
                 item["error"] = error
             samples.append(item)
 
+    actual_match_pitch_values = {
+        item["match_pitch"] for item in samples if "match_pitch" in item
+    }
     summary = {
         "benchmark": benchmark,
         "task": task,
         "metric": "onset_f1",
-        "match_pitch": bool(match_pitch),
+        "match_pitch": (
+            actual_match_pitch_values.pop()
+            if len(actual_match_pitch_values) == 1 else None
+        ),
+        "requested_match_pitch": bool(match_pitch),
         "onset_tolerance_sec": float(onset_tolerance),
         "region_policy": "full_audio" if task == "gen" else REGION_POLICY,
         "reference_policy": (

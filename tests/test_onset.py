@@ -46,9 +46,75 @@ class OnsetEvaluationTest(unittest.TestCase):
                 verify_transcription_cache=False,
                 interval_loader=load_intervals,
             )
+            sample = json.loads(
+                (root / "results" / "onset" / "samples.jsonl").read_text(
+                    encoding="utf-8",
+                ),
+            )
 
         self.assertEqual(summary["overall"]["scored"], 1)
         self.assertEqual(summary["overall"]["mean_f1"], 1.0)
+        self.assertFalse(summary["match_pitch"])
+        self.assertTrue(summary["requested_match_pitch"])
+        self.assertFalse(sample["match_pitch"])
+
+    def test_legacy_loader_rejects_custom_pitched_scorer_without_calling_it(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            benchmark_root = root / "testset" / "benchmark_style"
+            benchmark_root.mkdir(parents=True)
+            (benchmark_root / "reference.mid").touch()
+            (benchmark_root / "benchmark_gen.jsonl").write_text(
+                json.dumps({
+                    "record_id": "legacy-pitched-scorer",
+                    "family": "piano",
+                    "target_midi_path": "reference.mid",
+                    "target_duration": 1.0,
+                }) + "\n",
+                encoding="utf-8",
+            )
+            generated_root = root / "generated" / "benchmark_style" / "gen"
+            generated_root.mkdir(parents=True)
+            (generated_root / "legacy-pitched-scorer.mid").touch()
+            calls = 0
+
+            def load_intervals(_: Path, *__: float) -> MidiIntervals:
+                return MidiIntervals("ok", ((0.0, 1.0),))
+
+            def score_pitched(
+                reference: tuple[tuple[float, float], ...],
+                reference_pitches: tuple[int, ...],
+                estimated: tuple[tuple[float, float], ...],
+                estimated_pitches: tuple[int, ...],
+                tolerance: float,
+                match_pitch: bool,
+            ) -> dict[str, float]:
+                nonlocal calls
+                calls += 1
+                return {"precision": 1.0, "recall": 1.0, "f1": 1.0}
+
+            summary = evaluate_onset(
+                testset_root=root / "testset",
+                benchmark="benchmark_style",
+                task="gen",
+                generated_midi_root=root / "generated",
+                results_dir=root / "results",
+                verify_transcription_cache=False,
+                interval_loader=load_intervals,
+                interval_scorer=score_pitched,
+            )
+            sample = json.loads(
+                (root / "results" / "onset" / "samples.jsonl").read_text(
+                    encoding="utf-8",
+                ),
+            )
+
+        self.assertEqual(calls, 0)
+        self.assertEqual(summary["overall"]["scored"], 0)
+        self.assertIsNone(summary["match_pitch"])
+        self.assertEqual(sample["status"], "score_error")
+        self.assertNotIn("match_pitch", sample)
+        self.assertIn("does not provide MIDI pitches", sample["error"])
 
     def test_legacy_scorer_receives_intervals_when_loader_is_default(self) -> None:
         with TemporaryDirectory() as directory:
