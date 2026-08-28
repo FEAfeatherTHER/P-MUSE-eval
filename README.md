@@ -8,10 +8,11 @@ P-MUSE-eval evaluates generated WAV files on three public MIDI-to-audio benchmar
 
 Each benchmark contains 400 recordings for generation and editing. For each recording, the generation and editing tasks use different target regions or clips. A complete submission therefore contains 400 recordings for generation and 2,000 recordings for editing (five edit variants).
 
-The P-MUSE-eval toolkit reports two metrics:
+The P-MUSE-eval toolkit reports three metrics:
 
 1. Instrument embedding cosine similarity.
-2. Onset F1 with a 50 ms tolerance.
+2. Onset F1: note onsets must be within 50 ms and have the exact MIDI pitch by default.
+3. Offset F1: YourMT3-style note matching requires the onset rule plus an offset tolerance of `max(20% of note duration, 50 ms)`, with exact MIDI pitch by default. Drum samples are recorded but excluded from Offset F1 averages.
 
 For more benchmark construction and metric details, see our paper [P-MUSE: Prompt-MIDI-Optional Model for Unified Instrumental Music Synthesis and Editing](https://arxiv.org/abs/2608.01920). Thank you for your interest in this project. Due to corporate compliance and confidentiality policies, we are currently unable to open-source the full codebase of P-MUSE. 
 
@@ -136,9 +137,12 @@ export RUN_VALIDATE=1                  # 1: validate submitted WAV files; 0: ski
 export RUN_INSTRUMENT=1                # 1: compute instrument similarity; 0: skip
 export RUN_TRANSCRIBE=1                # 1: transcribe generated audio; 0: skip
 export RUN_ONSET=1                     # 1: compute Onset F1; 0: skip
+export RUN_OFFSET=1                    # 1: compute Offset F1; 0: skip
+export ONSET_MATCH_PITCH=1             # 1: require exact MIDI pitch for Onset F1; 0: ignore pitch
+export OFFSET_MATCH_PITCH=1            # 1: require exact MIDI pitch for Offset F1; 0: ignore pitch
 ```
 
-All four step switches default to `1`.
+All six switches default to `1`. Each switch accepts only `0` or `1`.
 
 ### Evaluate one benchmark and task
 
@@ -170,7 +174,8 @@ The script runs enabled steps in this order:
 2. Compute instrument similarity.
 3. Transcribe audio with YourMT3.
 4. Compute Onset F1.
+5. Compute Offset F1.
 
 YourMT3 transcribes only the submitted generated audio. For generation this is one WAV per recording; for editing it is one WAV per edit variant. Transcriptions and their cache records are stored under `<GENERATED_MIDI>/<benchmark>/<task>/`.
 
-Instrument similarity is computed between target and prompt regions. Onset F1 requires the MIDI and cache records produced by the transcription step.
+Instrument similarity is computed between target and prompt regions. Onset F1 and Offset F1 require the MIDI and cache records produced by the transcription step. Their per-sample and summary results are written to `<RESULTS>/<benchmark>/<task>/onset/` and `<RESULTS>/<benchmark>/<task>/offset/`; instrument results are written to `<RESULTS>/<benchmark>/<task>/instrument/`.

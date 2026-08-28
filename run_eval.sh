@@ -9,6 +9,9 @@ RUN_VALIDATE="${RUN_VALIDATE:-1}"
 RUN_INSTRUMENT="${RUN_INSTRUMENT:-1}"
 RUN_TRANSCRIBE="${RUN_TRANSCRIBE:-1}"
 RUN_ONSET="${RUN_ONSET:-1}"
+RUN_OFFSET="${RUN_OFFSET:-1}"
+ONSET_MATCH_PITCH="${ONSET_MATCH_PITCH:-1}"
+OFFSET_MATCH_PITCH="${OFFSET_MATCH_PITCH:-1}"
 SKIP_AUDIO_CHECK="${SKIP_AUDIO_CHECK:-0}"
 DEVICE="${DEVICE:-auto}"
 
@@ -30,12 +33,14 @@ require_variable() {
 }
 
 for name in \
-  RUN_VALIDATE RUN_INSTRUMENT RUN_TRANSCRIBE RUN_ONSET SKIP_AUDIO_CHECK; do
+  RUN_VALIDATE RUN_INSTRUMENT RUN_TRANSCRIBE RUN_ONSET RUN_OFFSET \
+  ONSET_MATCH_PITCH OFFSET_MATCH_PITCH SKIP_AUDIO_CHECK; do
   require_binary_switch "$name"
 done
 
 if [[ "$RUN_VALIDATE" == "1" || "$RUN_INSTRUMENT" == "1" || \
-      "$RUN_TRANSCRIBE" == "1" || "$RUN_ONSET" == "1" ]]; then
+      "$RUN_TRANSCRIBE" == "1" || "$RUN_ONSET" == "1" || \
+      "$RUN_OFFSET" == "1" ]]; then
   require_variable BENCHMARK
   require_variable TASK
   case "$BENCHMARK" in
@@ -66,7 +71,7 @@ if [[ "$RUN_VALIDATE" == "1" ]]; then
   if [[ "$SKIP_AUDIO_CHECK" == "1" ]]; then
     args+=(--skip-audio-check)
   fi
-  echo "[1/4] Validate $BENCHMARK/$TASK"
+  echo "[1/5] Validate $BENCHMARK/$TASK"
   "$PYTHON_BIN" -m pmuse_eval.validate "${args[@]}"
 fi
 
@@ -74,7 +79,7 @@ if [[ "$RUN_INSTRUMENT" == "1" ]]; then
   for name in TESTSET SUBMISSION RESULTS INSTRUMENT_ROOT; do
     require_variable "$name"
   done
-  echo "[2/4] Instrument similarity $BENCHMARK/$TASK"
+  echo "[2/5] Instrument similarity $BENCHMARK/$TASK"
   "$PYTHON_BIN" -m pmuse_eval.instrument \
     --testset-root "$TESTSET" \
     --submission-root "$SUBMISSION" \
@@ -89,7 +94,7 @@ if [[ "$RUN_TRANSCRIBE" == "1" ]]; then
   for name in TESTSET SUBMISSION GENERATED_MIDI YOURMT3_ROOT; do
     require_variable "$name"
   done
-  echo "[3/4] Transcribe audio $BENCHMARK/$TASK"
+  echo "[3/5] Transcribe audio $BENCHMARK/$TASK"
   "$PYTHON_BIN" -m pmuse_eval.transcription \
     --testset-root "$TESTSET" \
     --submission-root "$SUBMISSION" \
@@ -104,11 +109,34 @@ if [[ "$RUN_ONSET" == "1" ]]; then
   for name in TESTSET GENERATED_MIDI RESULTS; do
     require_variable "$name"
   done
-  echo "[4/4] Onset F1 $BENCHMARK/$TASK"
-  "$PYTHON_BIN" -m pmuse_eval.onset \
-    --testset-root "$TESTSET" \
-    --benchmark "$BENCHMARK" \
-    --task "$TASK" \
-    --generated-midi-dir "$GENERATED_MIDI" \
+  echo "[4/5] Onset F1 $BENCHMARK/$TASK"
+  args=(
+    --testset-root "$TESTSET"
+    --benchmark "$BENCHMARK"
+    --task "$TASK"
+    --generated-midi-dir "$GENERATED_MIDI"
     --results-dir "$RESULTS"
+  )
+  if [[ "$ONSET_MATCH_PITCH" == "0" ]]; then
+    args+=(--no-match-pitch)
+  fi
+  "$PYTHON_BIN" -m pmuse_eval.onset "${args[@]}"
+fi
+
+if [[ "$RUN_OFFSET" == "1" ]]; then
+  for name in TESTSET GENERATED_MIDI RESULTS; do
+    require_variable "$name"
+  done
+  echo "[5/5] Offset F1 $BENCHMARK/$TASK"
+  args=(
+    --testset-root "$TESTSET"
+    --benchmark "$BENCHMARK"
+    --task "$TASK"
+    --generated-midi-dir "$GENERATED_MIDI"
+    --results-dir "$RESULTS"
+  )
+  if [[ "$OFFSET_MATCH_PITCH" == "0" ]]; then
+    args+=(--no-match-pitch)
+  fi
+  "$PYTHON_BIN" -m pmuse_eval.offset "${args[@]}"
 fi
