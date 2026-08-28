@@ -1,7 +1,10 @@
 import json
 import unittest
+import warnings
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+import pretty_midi
 
 from pmuse_eval.manifests import EDIT_VARIANTS
 from pmuse_eval.note_metrics import MidiNotes
@@ -9,6 +12,53 @@ from pmuse_eval.offset import evaluate_offset
 
 
 class OffsetEvaluationTest(unittest.TestCase):
+    def test_empty_generated_midi_scores_zero_without_warnings(self) -> None:
+        """A generated MIDI with no notes must count as a zero-score sample."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            benchmark_root = root / "testset" / "benchmark_style"
+            benchmark_root.mkdir(parents=True)
+            reference_path = benchmark_root / "reference.mid"
+            reference = pretty_midi.PrettyMIDI()
+            instrument = pretty_midi.Instrument(program=0)
+            instrument.notes.append(pretty_midi.Note(100, 60, 0.0, 1.0))
+            reference.instruments.append(instrument)
+            reference.write(str(reference_path))
+            (benchmark_root / "benchmark_gen.jsonl").write_text(
+                json.dumps({
+                    "record_id": "empty-generated",
+                    "family": "piano",
+                    "target_midi_path": "reference.mid",
+                    "target_duration": 1.0,
+                }) + "\n",
+                encoding="utf-8",
+            )
+            generated_root = root / "generated" / "benchmark_style" / "gen"
+            generated_root.mkdir(parents=True)
+            pretty_midi.PrettyMIDI().write(str(generated_root / "empty-generated.mid"))
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                summary = evaluate_offset(
+                    testset_root=root / "testset",
+                    benchmark="benchmark_style",
+                    task="gen",
+                    generated_midi_root=root / "generated",
+                    results_dir=root / "results",
+                    verify_transcription_cache=False,
+                )
+            sample = json.loads(
+                (root / "results" / "offset" / "samples.jsonl").read_text(
+                    encoding="utf-8",
+                ),
+            )
+
+        self.assertEqual(sample["status"], "ok")
+        self.assertEqual(summary["overall"]["scored"], 1)
+        for name in ("precision", "recall", "f1"):
+            self.assertEqual(sample[name], 0.0)
+            self.assertEqual(summary["overall"][f"mean_{name}"], 0.0)
+
     def test_edit_variant_means_exclude_all_drum_rows(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -112,4 +162,7 @@ class OffsetEvaluationTest(unittest.TestCase):
         self.assertEqual(summary["overall"]["mean_f1"], 1.0)
         self.assertNotIn("drum", summary["per_family"])
         self.assertEqual(summary["not_applicable"]["count"], 1)
-        self.assertEqual(summary["not_applicable"]["excluded_from"], ["overall", "per_variant"])
+        self.assertEqual(
+            summary["not_applicable"]["excluded_from"],
+            ["overall", "per_family", "per_variant"],
+        )

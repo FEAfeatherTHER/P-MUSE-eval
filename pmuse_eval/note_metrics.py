@@ -59,6 +59,13 @@ def _midi_to_hz(pitches: Sequence[int]):
     return 440.0 * np.power(2.0, (values - 69.0) / 12.0)
 
 
+def _interval_array(intervals: Sequence[tuple[float, float]]):
+    """Return intervals with the ``(n, 2)`` shape expected by mir_eval."""
+    import numpy as np
+
+    return np.asarray(intervals, dtype=np.float64).reshape(-1, 2)
+
+
 def score_note_onsets(
     reference_intervals: Sequence[tuple[float, float]],
     reference_pitches: Sequence[int],
@@ -68,14 +75,15 @@ def score_note_onsets(
     match_pitch: bool = True,
 ) -> dict[str, float]:
     """Compute one-to-one onset precision, recall, and F1."""
-    import numpy as np
     from mir_eval.transcription import (
         onset_precision_recall_f1,
         precision_recall_f1_overlap,
     )
 
-    reference = np.asarray(reference_intervals, dtype=np.float64)
-    estimated = np.asarray(estimated_intervals, dtype=np.float64)
+    reference = _interval_array(reference_intervals)
+    estimated = _interval_array(estimated_intervals)
+    if len(estimated) == 0:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
     if match_pitch:
         precision, recall, f1, _ = precision_recall_f1_overlap(
             reference,
@@ -106,8 +114,10 @@ def score_note_offsets(
     import numpy as np
     from mir_eval.transcription import precision_recall_f1_overlap
 
-    reference = np.asarray(reference_intervals, dtype=np.float64)
-    estimated = np.asarray(estimated_intervals, dtype=np.float64)
+    reference = _interval_array(reference_intervals)
+    estimated = _interval_array(estimated_intervals)
+    if len(estimated) == 0:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
     reference_values = (
         _midi_to_hz(reference_pitches)
         if match_pitch else np.full(len(reference), 440.0)

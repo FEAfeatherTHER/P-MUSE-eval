@@ -127,7 +127,7 @@ def _score_pair(
     if reference.status != "ok":
         return f"reference_{reference.status}", None, reference.error, None
     generated = interval_loader(gen_path, *gen_window)
-    if generated.status != "ok":
+    if generated.status not in {"ok", "empty"}:
         return f"generated_{generated.status}", None, generated.error, None
     try:
         legacy_loader = isinstance(reference, MidiIntervals) or isinstance(

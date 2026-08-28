@@ -156,7 +156,7 @@ def evaluate_offset(
         "not_applicable": {
             "count": len(not_applicable),
             "families": {"drum": len(not_applicable)},
-            "excluded_from": ["overall", "per_variant"],
+            "excluded_from": ["overall", "per_family", "per_variant"],
         },
         "status_counts": dict(sorted(
             (status, sum(item["status"] == status for item in samples))

@@ -1,4 +1,5 @@
 import unittest
+import warnings
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -9,9 +10,25 @@ from pmuse_eval.note_metrics import (
     score_note_offsets,
     score_note_onsets,
 )
+from pmuse_eval.onset import score_interval_onsets
 
 
 class NoteOnsetScoringTest(unittest.TestCase):
+    def test_empty_estimate_scores_zero_in_pitched_and_legacy_paths(self) -> None:
+        """Empty estimates use a two-column interval array and score as zero."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            pitched = score_note_onsets(
+                [(0.0, 1.0)], [60], (), (), match_pitch=True,
+            )
+            pitch_agnostic = score_note_onsets(
+                [(0.0, 1.0)], [60], (), (), match_pitch=False,
+            )
+            legacy = score_interval_onsets([(0.0, 1.0)], ())
+
+        for scores in (pitched, pitch_agnostic, legacy):
+            self.assertEqual(scores, {"precision": 0.0, "recall": 0.0, "f1": 0.0})
+
     def test_wrong_pitch_respects_match_pitch_switch(self) -> None:
         reference_intervals = [(0.0, 1.0)]
         estimated_intervals = [(0.0, 1.0)]
