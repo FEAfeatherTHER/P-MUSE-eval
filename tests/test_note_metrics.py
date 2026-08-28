@@ -95,6 +95,23 @@ class NoteOffsetScoringTest(unittest.TestCase):
         self.assertEqual(within_tolerance["f1"], 1.0)
         self.assertEqual(outside_tolerance["f1"], 0.0)
 
+    def test_short_note_uses_50_millisecond_minimum_offset_tolerance(self) -> None:
+        at_minimum_tolerance = score_note_offsets(
+            [(0.0, 0.1)],
+            [60],
+            [(0.0, 0.15)],
+            [60],
+        )
+        beyond_minimum_tolerance = score_note_offsets(
+            [(0.0, 0.1)],
+            [60],
+            [(0.0, 0.151)],
+            [60],
+        )
+
+        self.assertEqual(at_minimum_tolerance["f1"], 1.0)
+        self.assertEqual(beyond_minimum_tolerance["f1"], 0.0)
+
 
 class MidiNoteLoadingTest(unittest.TestCase):
     def test_loads_windowed_intervals_with_integer_midi_pitches(self) -> None:

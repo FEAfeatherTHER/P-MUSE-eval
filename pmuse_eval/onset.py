@@ -1,4 +1,4 @@
-"""Pitch-agnostic, 50 ms onset F1 for P-MUSE benchmarks."""
+"""Pitch-aware, 50 ms onset F1 for P-MUSE benchmarks."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import json
 import math
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 from .cache import sha256_file
 from .manifests import (
@@ -28,9 +29,41 @@ from .note_metrics import (
 
 REGION_POLICY = "edited_target_v1"
 
-MidiIntervals = MidiNotes
-load_midi_intervals = load_midi_notes
-score_interval_onsets = score_note_onsets
+
+@dataclass(frozen=True)
+class MidiIntervals:
+    """Legacy pitch-agnostic MIDI interval result."""
+
+    status: str
+    intervals: tuple[tuple[float, float], ...] = ()
+    error: str | None = None
+
+
+def load_midi_intervals(
+    midi_path: Path,
+    start_sec: float = 0.0,
+    end_sec: float = math.inf,
+    shift_sec: float = 0.0,
+) -> MidiIntervals:
+    """Load pitch-agnostic intervals with the original public contract."""
+    notes = load_midi_notes(midi_path, start_sec, end_sec, shift_sec)
+    return MidiIntervals(notes.status, notes.intervals, notes.error)
+
+
+def score_interval_onsets(
+    reference: Sequence[tuple[float, float]],
+    estimated: Sequence[tuple[float, float]],
+    onset_tolerance: float = DEFAULT_ONSET_TOLERANCE,
+) -> dict[str, float]:
+    """Score pitch-agnostic intervals with the original public signature."""
+    return score_note_onsets(
+        reference,
+        [0] * len(reference),
+        estimated,
+        [0] * len(estimated),
+        onset_tolerance,
+        match_pitch=False,
+    )
 
 
 def segment_duration(segment: dict[str, Any]) -> float:
@@ -67,7 +100,7 @@ def _score_pair(
     gen_window: tuple[float, float, float],
     onset_tolerance: float,
     match_pitch: bool,
-    interval_loader: Callable[[Path, float, float, float], MidiNotes],
+    interval_loader: Callable[[Path, float, float, float], MidiNotes | MidiIntervals],
     interval_scorer: Callable[..., dict[str, float]],
 ) -> tuple[str, dict[str, float] | None, str | None]:
     if not ref_path.is_file():
@@ -81,6 +114,10 @@ def _score_pair(
     if generated.status != "ok":
         return f"generated_{generated.status}", None, generated.error
     try:
+        if isinstance(reference, MidiIntervals) or isinstance(generated, MidiIntervals):
+            return "ok", interval_scorer(
+                reference.intervals, generated.intervals, onset_tolerance,
+            ), None
         return "ok", interval_scorer(
             reference.intervals,
             reference.pitches,
@@ -191,7 +228,7 @@ def evaluate_onset(
     onset_tolerance: float = DEFAULT_ONSET_TOLERANCE,
     match_pitch: bool = True,
     verify_transcription_cache: bool = True,
-    interval_loader: Callable[[Path, float, float, float], MidiNotes] = load_midi_notes,
+    interval_loader: Callable[[Path, float, float, float], MidiNotes | MidiIntervals] = load_midi_notes,
     interval_scorer: Callable[..., dict[str, float]] = score_note_onsets,
 ) -> dict[str, Any]:
     """Score all expected records and overwrite per-sample and summary outputs."""
