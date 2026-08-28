@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-from .cache import sha256_file
+from .cache import file_info
 from .manifests import (
     BENCHMARKS,
     EDIT_VARIANTS,
@@ -238,12 +238,14 @@ def _transcription_evidence_status(
     if not midi_path.is_file():
         return "missing_transcribed_midi"
     try:
-        if entry.get("midi_sha256") != sha256_file(midi_path):
+        if entry.get("midi_path") != str(midi_path):
+            return "invalid_transcription_cache_entry"
+        if entry.get("midi_file_info") != file_info(midi_path):
             return "changed_transcribed_midi"
         audio_path = Path(str(entry["audio_path"]))
         if not audio_path.is_file():
             return "missing_transcription_audio"
-        if entry.get("audio_sha256") != sha256_file(audio_path):
+        if entry.get("audio_file_info") != file_info(audio_path):
             return "changed_transcription_audio"
     except (KeyError, OSError):
         return "invalid_transcription_cache_entry"

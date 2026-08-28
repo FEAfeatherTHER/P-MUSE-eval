@@ -1,20 +1,17 @@
-"""Content-addressed artifact cache helpers."""
+"""Artifact metadata and serialization helpers."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 
-def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        while chunk := handle.read(chunk_size):
-            digest.update(chunk)
-    return digest.hexdigest()
+def file_info(path: Path) -> dict[str, int]:
+    """Return the persisted file information used for cache validation."""
+    stat = Path(path).stat()
+    return {"size_bytes": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
 
 
 def write_json_atomic(path: Path, payload: Any) -> None:

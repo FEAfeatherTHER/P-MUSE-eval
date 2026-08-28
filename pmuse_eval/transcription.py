@@ -1,9 +1,8 @@
-"""YourMT3 transcription and content-addressed MIDI caching."""
+"""YourMT3 transcription and MIDI caching."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -14,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .cache import file_info
 from .dependencies import YOURMT3_CHECKPOINT_REL, check_yourmt3_paths
 from .manifests import (
     BENCHMARKS,
@@ -59,18 +59,13 @@ class TranscriptionJob:
     variant: str | None = None
 
 
-def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        while chunk := handle.read(chunk_size):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def transcription_config_sha256(config: dict[str, Any] | None = None) -> str:
+def transcription_config_snapshot(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return a JSON-compatible configuration value for cache comparison."""
     payload = config if config is not None else TRANSCRIPTION_CONFIG
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    snapshot = json.loads(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+    if not isinstance(snapshot, dict):
+        raise ValueError("transcription configuration must be a JSON object")
+    return snapshot
 
 
 def expected_checkpoint_path(yourmt3_root: Path) -> Path:
@@ -130,11 +125,18 @@ def _read_cache(path: Path) -> dict[str, dict[str, Any]]:
     }
 
 
-def _midi_matches_cache(path: Path, cached: dict[str, Any] | None) -> bool:
-    if cached is None or not path.is_file() or not cached.get("midi_sha256"):
+def _matches_cache(
+    midi_path: Path,
+    cached: dict[str, Any] | None,
+    identity: dict[str, Any],
+) -> bool:
+    if cached is None or cached.get("status") != "ok" or not midi_path.is_file():
         return False
     try:
-        return cached["midi_sha256"] == sha256_file(path)
+        return (
+            all(cached.get(key) == value for key, value in identity.items())
+            and cached.get("midi_file_info") == file_info(midi_path)
+        )
     except OSError:
         return False
 
@@ -249,8 +251,8 @@ def transcribe_benchmark(
     checkpoint = expected_checkpoint_path(yourmt3_root)
     if not checkpoint.is_file():
         raise FileNotFoundError(f"YourMT3 checkpoint not found: {checkpoint}")
-    checkpoint_sha = sha256_file(checkpoint)
-    config_sha = transcription_config_sha256()
+    checkpoint_info = file_info(checkpoint)
+    config_snapshot = transcription_config_snapshot()
     jobs = collect_transcription_jobs(
         testset_root, submission_root, benchmark, task, generated_midi_root,
     )
@@ -269,12 +271,13 @@ def transcribe_benchmark(
             "variant": job.variant,
             "audio_path": str(job.audio_path),
             "midi_path": str(job.midi_path),
+            "checkpoint_path": str(checkpoint),
         }
         if not job.audio_path.is_file():
             statuses.append({**base, "status": "missing_audio"})
             continue
         try:
-            audio_sha = sha256_file(job.audio_path)
+            audio_info = file_info(job.audio_path)
         except OSError as exc:
             statuses.append({**base, "status": "audio_read_error", "error": str(exc)})
             continue
@@ -283,17 +286,11 @@ def transcribe_benchmark(
         cached = cache.get(cache_key)
         identity = {
             **base,
-            "audio_sha256": audio_sha,
-            "checkpoint_sha256": checkpoint_sha,
-            "config_sha256": config_sha,
+            "audio_file_info": audio_info,
+            "checkpoint_file_info": checkpoint_info,
+            "transcription_config": config_snapshot,
         }
-        if (
-            _midi_matches_cache(job.midi_path, cached)
-            and cached is not None
-            and all(cached.get(key) == identity[key] for key in (
-                "audio_sha256", "checkpoint_sha256", "config_sha256",
-            ))
-        ):
+        if _matches_cache(job.midi_path, cached, identity):
             statuses.append({**identity, "status": "cached"})
             continue
 
@@ -305,7 +302,7 @@ def transcribe_benchmark(
                 raise RuntimeError("transcriber returned without creating the MIDI file")
             cache_record = {
                 **identity,
-                "midi_sha256": sha256_file(job.midi_path),
+                "midi_file_info": file_info(job.midi_path),
                 "status": "ok",
             }
             cache[cache_key] = cache_record
