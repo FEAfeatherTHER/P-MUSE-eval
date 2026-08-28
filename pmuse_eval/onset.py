@@ -7,9 +7,8 @@ import json
 import math
 import os
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable
 
 from .cache import sha256_file
 from .manifests import (
@@ -19,17 +18,19 @@ from .manifests import (
     read_jsonl,
     write_jsonl_atomic,
 )
+from .note_metrics import (
+    DEFAULT_ONSET_TOLERANCE,
+    MidiNotes,
+    load_midi_notes,
+    score_note_onsets,
+)
 
 
-DEFAULT_ONSET_TOLERANCE = 0.05
 REGION_POLICY = "edited_target_v1"
 
-
-@dataclass(frozen=True)
-class MidiIntervals:
-    status: str
-    intervals: tuple[tuple[float, float], ...] = ()
-    error: str | None = None
+MidiIntervals = MidiNotes
+load_midi_intervals = load_midi_notes
+score_interval_onsets = score_note_onsets
 
 
 def segment_duration(segment: dict[str, Any]) -> float:
@@ -59,59 +60,15 @@ def generation_reference(
     )
 
 
-def load_midi_intervals(
-    midi_path: Path,
-    start_sec: float = 0.0,
-    end_sec: float = math.inf,
-    shift_sec: float = 0.0,
-) -> MidiIntervals:
-    """Extract note intervals using the same onset window as ``_metrics.sh``."""
-    try:
-        import pretty_midi
-        midi = pretty_midi.PrettyMIDI(str(midi_path))
-    except Exception as exc:
-        return MidiIntervals("parse_error", error=str(exc))
-
-    intervals: list[tuple[float, float]] = []
-    for instrument in midi.instruments:
-        for note in instrument.notes:
-            onset = float(note.start)
-            if onset < start_sec or onset >= end_sec:
-                continue
-            shifted_start = max(start_sec, onset) + shift_sec
-            shifted_end = min(end_sec, float(note.end)) + shift_sec
-            if shifted_end <= shifted_start:
-                shifted_end = shifted_start + 1e-3
-            intervals.append((shifted_start, shifted_end))
-    if not intervals:
-        return MidiIntervals("empty")
-    return MidiIntervals("ok", tuple(intervals))
-
-
-def score_interval_onsets(
-    reference: Sequence[tuple[float, float]],
-    estimated: Sequence[tuple[float, float]],
-    onset_tolerance: float = DEFAULT_ONSET_TOLERANCE,
-) -> dict[str, float]:
-    import numpy as np
-    from mir_eval.transcription import onset_precision_recall_f1
-
-    precision, recall, f1 = onset_precision_recall_f1(
-        np.asarray(reference, dtype=np.float64),
-        np.asarray(estimated, dtype=np.float64),
-        onset_tolerance=float(onset_tolerance),
-    )
-    return {"precision": float(precision), "recall": float(recall), "f1": float(f1)}
-
-
 def _score_pair(
     ref_path: Path,
     gen_path: Path,
     ref_window: tuple[float, float, float],
     gen_window: tuple[float, float, float],
     onset_tolerance: float,
-    interval_loader: Callable[[Path, float, float, float], MidiIntervals],
-    interval_scorer: Callable[[Sequence[tuple[float, float]], Sequence[tuple[float, float]], float], dict[str, float]],
+    match_pitch: bool,
+    interval_loader: Callable[[Path, float, float, float], MidiNotes],
+    interval_scorer: Callable[..., dict[str, float]],
 ) -> tuple[str, dict[str, float] | None, str | None]:
     if not ref_path.is_file():
         return "missing_reference_midi", None, None
@@ -125,7 +82,12 @@ def _score_pair(
         return f"generated_{generated.status}", None, generated.error
     try:
         return "ok", interval_scorer(
-            reference.intervals, generated.intervals, onset_tolerance,
+            reference.intervals,
+            reference.pitches,
+            generated.intervals,
+            generated.pitches,
+            onset_tolerance,
+            match_pitch,
         ), None
     except Exception as exc:
         return "score_error", None, str(exc)
@@ -227,9 +189,10 @@ def evaluate_onset(
     generated_midi_root: Path,
     results_dir: Path,
     onset_tolerance: float = DEFAULT_ONSET_TOLERANCE,
+    match_pitch: bool = True,
     verify_transcription_cache: bool = True,
-    interval_loader: Callable[[Path, float, float, float], MidiIntervals] = load_midi_intervals,
-    interval_scorer: Callable[[Sequence[tuple[float, float]], Sequence[tuple[float, float]], float], dict[str, float]] = score_interval_onsets,
+    interval_loader: Callable[[Path, float, float, float], MidiNotes] = load_midi_notes,
+    interval_scorer: Callable[..., dict[str, float]] = score_note_onsets,
 ) -> dict[str, Any]:
     """Score all expected records and overwrite per-sample and summary outputs."""
     if benchmark not in BENCHMARKS:
@@ -283,7 +246,7 @@ def evaluate_onset(
                     transcription_error = f"generated_{evidence}"
             if transcription_error is None:
                 status, score, error = _score_pair(
-                    ref_path, gen_path, ref_window, gen_window, onset_tolerance,
+                    ref_path, gen_path, ref_window, gen_window, onset_tolerance, match_pitch,
                     interval_loader, interval_scorer,
                 )
             else:
@@ -308,7 +271,8 @@ def evaluate_onset(
     summary = {
         "benchmark": benchmark,
         "task": task,
-        "metric": "onset_f1_pitch_agnostic",
+        "metric": "onset_f1",
+        "match_pitch": bool(match_pitch),
         "onset_tolerance_sec": float(onset_tolerance),
         "region_policy": "full_audio" if task == "gen" else REGION_POLICY,
         "reference_policy": (
@@ -336,6 +300,9 @@ def main(argv: Iterable[str] | None = None) -> None:
     parser.add_argument("--task", choices=("gen", "edit"), required=True)
     parser.add_argument("--generated-midi-dir", type=Path, required=True)
     parser.add_argument("--results-dir", type=Path, required=True)
+    parser.add_argument("--match-pitch", dest="match_pitch", action="store_true")
+    parser.add_argument("--no-match-pitch", dest="match_pitch", action="store_false")
+    parser.set_defaults(match_pitch=True)
     args = parser.parse_args(argv)
     summary = evaluate_onset(
         testset_root=args.testset_root,
@@ -343,6 +310,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         task=args.task,
         generated_midi_root=args.generated_midi_dir,
         results_dir=args.results_dir / args.benchmark / args.task,
+        match_pitch=args.match_pitch,
     )
     print(json.dumps(summary, indent=2))
 

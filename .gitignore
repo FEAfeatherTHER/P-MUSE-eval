@@ -3,4 +3,3 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 docs/
-tests/
