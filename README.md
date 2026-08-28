@@ -142,7 +142,7 @@ export ONSET_MATCH_PITCH=1             # 1: require exact MIDI pitch for Onset F
 export OFFSET_MATCH_PITCH=1            # 1: require exact MIDI pitch for Offset F1; 0: ignore pitch
 ```
 
-All six switches default to `1`. Each switch accepts only `0` or `1`.
+All seven switches default to `1`. Each switch accepts only `0` or `1`.
 
 ### Evaluate one benchmark and task
 
