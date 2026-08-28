@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pretty_midi
+
 from pmuse_eval.note_metrics import MidiNotes
 from pmuse_eval.onset import (
     MidiIntervals,
@@ -13,6 +15,89 @@ from pmuse_eval.onset import (
 
 
 class OnsetEvaluationTest(unittest.TestCase):
+    def test_legacy_loader_uses_legacy_scoring_when_scorer_is_default(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            benchmark_root = root / "testset" / "benchmark_style"
+            benchmark_root.mkdir(parents=True)
+            (benchmark_root / "reference.mid").touch()
+            (benchmark_root / "benchmark_gen.jsonl").write_text(
+                json.dumps({
+                    "record_id": "legacy-loader",
+                    "family": "piano",
+                    "target_midi_path": "reference.mid",
+                    "target_duration": 1.0,
+                }) + "\n",
+                encoding="utf-8",
+            )
+            generated_root = root / "generated" / "benchmark_style" / "gen"
+            generated_root.mkdir(parents=True)
+            (generated_root / "legacy-loader.mid").touch()
+
+            def load_intervals(_: Path, *__: float) -> MidiIntervals:
+                return MidiIntervals("ok", ((0.0, 1.0),))
+
+            summary = evaluate_onset(
+                testset_root=root / "testset",
+                benchmark="benchmark_style",
+                task="gen",
+                generated_midi_root=root / "generated",
+                results_dir=root / "results",
+                verify_transcription_cache=False,
+                interval_loader=load_intervals,
+            )
+
+        self.assertEqual(summary["overall"]["scored"], 1)
+        self.assertEqual(summary["overall"]["mean_f1"], 1.0)
+
+    def test_legacy_scorer_receives_intervals_when_loader_is_default(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            benchmark_root = root / "testset" / "benchmark_style"
+            benchmark_root.mkdir(parents=True)
+            reference_path = benchmark_root / "reference.mid"
+            generated_root = root / "generated" / "benchmark_style" / "gen"
+            generated_root.mkdir(parents=True)
+            generated_path = generated_root / "legacy-scorer.mid"
+            for path in (reference_path, generated_path):
+                midi = pretty_midi.PrettyMIDI()
+                instrument = pretty_midi.Instrument(program=0)
+                instrument.notes.append(pretty_midi.Note(100, 60, 0.0, 1.0))
+                midi.instruments.append(instrument)
+                midi.write(str(path))
+            (benchmark_root / "benchmark_gen.jsonl").write_text(
+                json.dumps({
+                    "record_id": "legacy-scorer",
+                    "family": "piano",
+                    "target_midi_path": "reference.mid",
+                    "target_duration": 1.0,
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            def score_intervals(
+                reference: tuple[tuple[float, float], ...],
+                estimated: tuple[tuple[float, float], ...],
+                tolerance: float,
+            ) -> dict[str, float]:
+                self.assertEqual(len(reference), 1)
+                self.assertEqual(len(estimated), 1)
+                self.assertEqual(tolerance, 0.05)
+                return {"precision": 1.0, "recall": 1.0, "f1": 1.0}
+
+            summary = evaluate_onset(
+                testset_root=root / "testset",
+                benchmark="benchmark_style",
+                task="gen",
+                generated_midi_root=root / "generated",
+                results_dir=root / "results",
+                verify_transcription_cache=False,
+                interval_scorer=score_intervals,
+            )
+
+        self.assertEqual(summary["overall"]["scored"], 1)
+        self.assertEqual(summary["overall"]["mean_f1"], 1.0)
+
     def test_legacy_loader_returns_legacy_interval_result(self) -> None:
         result = load_midi_intervals(Path("missing.mid"))
 

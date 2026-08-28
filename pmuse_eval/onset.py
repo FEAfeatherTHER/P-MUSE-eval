@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import math
 import os
@@ -66,6 +67,21 @@ def score_interval_onsets(
     )
 
 
+def _supports_pitched_scorer(interval_scorer: Callable[..., dict[str, float]]) -> bool:
+    """Return whether a scorer accepts the six-argument pitched interface."""
+    if interval_scorer is score_note_onsets:
+        return True
+    try:
+        inspect.signature(interval_scorer).bind(
+            (), (), (), (), DEFAULT_ONSET_TOLERANCE, True,
+        )
+    except TypeError:
+        return False
+    except ValueError:
+        return True
+    return True
+
+
 def segment_duration(segment: dict[str, Any]) -> float:
     if "duration" in segment:
         return float(segment["duration"])
@@ -114,7 +130,14 @@ def _score_pair(
     if generated.status != "ok":
         return f"generated_{generated.status}", None, generated.error
     try:
-        if isinstance(reference, MidiIntervals) or isinstance(generated, MidiIntervals):
+        legacy_loader = isinstance(reference, MidiIntervals) or isinstance(
+            generated, MidiIntervals,
+        )
+        if legacy_loader and _supports_pitched_scorer(interval_scorer):
+            return "ok", score_interval_onsets(
+                reference.intervals, generated.intervals, onset_tolerance,
+            ), None
+        if legacy_loader or not _supports_pitched_scorer(interval_scorer):
             return "ok", interval_scorer(
                 reference.intervals, generated.intervals, onset_tolerance,
             ), None
