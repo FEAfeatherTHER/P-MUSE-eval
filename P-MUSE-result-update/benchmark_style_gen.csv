@@ -1,0 +1,6 @@
+family,sim,onset_f1,offset_f1
+overall,0.909,0.507,0.260
+bass,0.911,0.288,0.148
+drum,0.932,0.561,
+guitar,0.907,0.642,0.363
+piano,0.887,0.536,0.268

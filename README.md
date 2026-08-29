@@ -14,6 +14,16 @@ The P-MUSE-eval toolkit reports three metrics:
 2. Onset F1: note onsets must be within 50 ms and have the exact MIDI pitch by default.
 3. Offset F1: YourMT3-style note matching requires the onset rule plus an offset tolerance of `max(20% of note duration, 50 ms)`, with exact MIDI pitch by default. Drum samples are recorded but excluded from Offset F1 averages.
 
+## P-MUSE results
+
+| Benchmark | Gen SIM | Gen Onset F1 | Gen Offset F1 | Edit SIM | Edit Onset F1 | Edit Offset F1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `paired` | 0.917 | 0.489 | 0.251 | 0.931 | 0.457 | 0.236 |
+| `style` | 0.909 | 0.507 | 0.260 | 0.923 | 0.482 | 0.254 |
+| `mixed` | 0.928 | 0.475 | 0.239 | 0.930 | 0.463 | 0.246 |
+
+The paper reports SIM between the generated target and ground-truth target; the results above instead compare the generated target with the prompt. Both Onset F1 and Offset F1 require exact MIDI pitch. Overall and per-family result files are available in [`P-MUSE-result-update`](P-MUSE-result-update/).
+
 For more benchmark construction and metric details, see our paper [P-MUSE: Prompt-MIDI-Optional Model for Unified Instrumental Music Synthesis and Editing](https://arxiv.org/abs/2608.01920). Thank you for your interest in this project. Due to corporate compliance and confidentiality policies, we are currently unable to open-source the full codebase of P-MUSE. 
 
 Feel free to reach out via [Email](mailto:chongjing@link.cuhk.edu.cn) for discussions.
