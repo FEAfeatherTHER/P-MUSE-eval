@@ -9,8 +9,6 @@ from typing import Sequence
 
 
 DEFAULT_ONSET_TOLERANCE = 0.05
-DEFAULT_OFFSET_RATIO = 0.2
-DEFAULT_OFFSET_MIN_TOLERANCE = 0.05
 
 
 @dataclass(frozen=True)
@@ -99,40 +97,4 @@ def score_note_onsets(
             estimated,
             onset_tolerance=float(onset_tolerance),
         )
-    return {"precision": float(precision), "recall": float(recall), "f1": float(f1)}
-
-
-def score_note_offsets(
-    reference_intervals: Sequence[tuple[float, float]],
-    reference_pitches: Sequence[int],
-    estimated_intervals: Sequence[tuple[float, float]],
-    estimated_pitches: Sequence[int],
-    onset_tolerance: float = DEFAULT_ONSET_TOLERANCE,
-    match_pitch: bool = True,
-) -> dict[str, float]:
-    """Compute one-to-one onset-and-offset precision, recall, and F1."""
-    import numpy as np
-    from mir_eval.transcription import precision_recall_f1_overlap
-
-    reference = _interval_array(reference_intervals)
-    estimated = _interval_array(estimated_intervals)
-    if len(estimated) == 0:
-        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
-    reference_values = (
-        _midi_to_hz(reference_pitches)
-        if match_pitch else np.full(len(reference), 440.0)
-    )
-    estimated_values = (
-        _midi_to_hz(estimated_pitches)
-        if match_pitch else np.full(len(estimated), 440.0)
-    )
-    precision, recall, f1, _ = precision_recall_f1_overlap(
-        reference,
-        reference_values,
-        estimated,
-        estimated_values,
-        onset_tolerance=float(onset_tolerance),
-        offset_ratio=DEFAULT_OFFSET_RATIO,
-        offset_min_tolerance=DEFAULT_OFFSET_MIN_TOLERANCE,
-    )
     return {"precision": float(precision), "recall": float(recall), "f1": float(f1)}
