@@ -1,4 +1,4 @@
-"""Family-constrained MuScriptor transcription and MIDI caching."""
+"""Instrument-constrained MuScriptor transcription and MIDI caching."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from .manifests import (
     read_jsonl,
     write_jsonl_atomic,
 )
+from .muscriptor_groups import instrument_group_for_record
 
 
 DEFAULT_MUSCRIPTOR_MODEL = "large"
@@ -38,31 +39,15 @@ TRANSCRIPTION_CONFIG = {
     "detect_tempo": "best-effort",
 }
 
-MUSCRIPTOR_GROUPS_BY_FAMILY = {
-    "piano": ("acoustic_piano", "electric_piano"),
-    "guitar": (
-        "acoustic_guitar",
-        "clean_electric_guitar",
-        "distorted_electric_guitar",
-    ),
-    "bass": ("acoustic_bass", "electric_bass"),
-    "drum": ("drums",),
-}
-
-
-def instrument_groups_for_family(family: str) -> tuple[str, ...]:
-    """Return the MuScriptor groups allowed for one benchmark family."""
-    try:
-        return MUSCRIPTOR_GROUPS_BY_FAMILY[str(family)]
-    except KeyError as exc:
-        raise ValueError(f"Unknown benchmark instrument family: {family}") from exc
-
 
 @dataclass(frozen=True)
 class TranscriptionJob:
     kind: str
     record_id: str
     family: str
+    dataset_name: str
+    instrument_name: str
+    instrument_group: str
     audio_path: Path
     midi_path: Path
     variant: str | None = None
@@ -94,16 +79,36 @@ def collect_transcription_jobs(
     output_root = Path(generated_midi_root).resolve() / benchmark / task
     submission_dir = Path(submission_root).resolve() / benchmark / task
     records = read_jsonl(benchmark_root / f"benchmark_{task}.jsonl")
+    metadata_by_id: dict[str, dict[str, Any]] = {}
+    for metadata in read_jsonl(benchmark_root / "metadata.jsonl"):
+        metadata_id = checked_record_id(metadata["record_id"])
+        if metadata_id in metadata_by_id:
+            raise ValueError(f"Duplicate metadata record_id: {metadata_id}")
+        metadata_by_id[metadata_id] = metadata
     jobs: list[TranscriptionJob] = []
 
     for record in records:
         record_id = checked_record_id(record["record_id"])
         family = str(record.get("family", "?"))
+        try:
+            metadata = metadata_by_id[record_id]
+        except KeyError as exc:
+            raise ValueError(f"Missing metadata for record_id: {record_id}") from exc
+        if str(metadata.get("family")) != family:
+            raise ValueError(f"Family mismatch in metadata for record_id: {record_id}")
+        dataset_name = str(metadata.get("dataset_name", ""))
+        instrument_name = str(metadata.get("instrument_name", ""))
+        instrument_group = instrument_group_for_record(
+            family, dataset_name, instrument_name,
+        )
         if task == "gen":
             jobs.append(TranscriptionJob(
                 kind="generated",
                 record_id=record_id,
                 family=family,
+                dataset_name=dataset_name,
+                instrument_name=instrument_name,
+                instrument_group=instrument_group,
                 audio_path=submission_dir / f"{record_id}.wav",
                 midi_path=output_root / f"{record_id}.mid",
             ))
@@ -113,6 +118,9 @@ def collect_transcription_jobs(
                     kind="generated",
                     record_id=record_id,
                     family=family,
+                    dataset_name=dataset_name,
+                    instrument_name=instrument_name,
+                    instrument_group=instrument_group,
                     variant=variant,
                     audio_path=submission_dir / f"{record_id}__{variant}.wav",
                     midi_path=output_root / f"{record_id}__{variant}.mid",
@@ -205,15 +213,15 @@ def transcribe_audio(
     model: Any,
     audio_path: Path,
     midi_path: Path,
-    family: str,
+    instrument_group: str,
 ) -> None:
-    """Write one family-constrained MuScriptor transcription atomically."""
+    """Write one instrument-constrained MuScriptor transcription atomically."""
     midi_bytes = model.transcribe_to_midi(
         audio_path,
         use_sampling=False,
         temperature=1.0,
         cfg_coef=1.0,
-        instruments=list(instrument_groups_for_family(family)),
+        instruments=[instrument_group],
         batch_size=1,
         no_eos_is_ok=True,
         beam_size=1,
@@ -266,11 +274,13 @@ def transcribe_benchmark(
     model_load_error: Exception | None = None
 
     for job in jobs:
-        instrument_groups = list(instrument_groups_for_family(job.family))
+        instrument_groups = [job.instrument_group]
         base = {
             "kind": job.kind,
             "record_id": job.record_id,
             "family": job.family,
+            "dataset_name": job.dataset_name,
+            "instrument_name": job.instrument_name,
             "variant": job.variant,
             "audio_path": str(job.audio_path),
             "midi_path": str(job.midi_path),
@@ -310,7 +320,7 @@ def transcribe_benchmark(
                     model_load_error = exc
             if model_load_error is not None:
                 raise model_load_error
-            transcriber(model, job.audio_path, job.midi_path, job.family)
+            transcriber(model, job.audio_path, job.midi_path, job.instrument_group)
             if not job.midi_path.is_file():
                 raise RuntimeError("transcriber returned without creating the MIDI file")
             cache_record = {

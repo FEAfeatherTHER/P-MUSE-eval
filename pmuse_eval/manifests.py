@@ -10,11 +10,20 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+from .muscriptor_groups import instrument_group_for_record
+
 
 BENCHMARKS = ("benchmark_paired", "benchmark_style", "benchmark_mixed")
 TASKS = ("gen", "edit")
 EDIT_VARIANTS = ("add", "delete", "pitch_shift", "velocity_scale", "timing")
 FAMILIES = ("bass", "drum", "guitar", "piano")
+METADATA_KEYS = {
+    "record_id",
+    "family",
+    "dataset_name",
+    "instrument_family",
+    "instrument_name",
+}
 
 SCHEMAS = {
     ("benchmark_paired", "gen"): (
@@ -192,11 +201,69 @@ def _validate_edit_shape(
         errors.append(f"{label}.edits: variants must be {EDIT_VARIANTS}")
 
 
+def validate_benchmark_metadata(
+    benchmark_root: Path,
+    expected_record_families: dict[str, str],
+    expected_rows: int = 400,
+) -> dict[str, Any]:
+    """Validate metadata required by instrument-constrained transcription."""
+    path = Path(benchmark_root) / "metadata.jsonl"
+    records = read_jsonl(path)
+    errors: list[str] = []
+    ids: list[str] = []
+    group_counts: Counter[str] = Counter()
+
+    if len(records) != expected_rows:
+        errors.append(f"{path}: expected {expected_rows} rows, found {len(records)}")
+    for index, record in enumerate(records, start=1):
+        label = f"{path}:{index}"
+        if set(record) != METADATA_KEYS:
+            errors.append(
+                f"{label}: keys differ; missing={sorted(METADATA_KEYS - set(record))}, "
+                f"extra={sorted(set(record) - METADATA_KEYS)}"
+            )
+            continue
+        try:
+            record_id = checked_record_id(record["record_id"])
+            ids.append(record_id)
+            expected_family = expected_record_families.get(record_id)
+            if (
+                expected_family is not None
+                and str(record["family"]) != expected_family
+            ):
+                errors.append(
+                    f"{label}: family mismatch; benchmark={expected_family!r}, "
+                    f"metadata={record['family']!r}"
+                )
+            group = instrument_group_for_record(
+                record["family"], record["dataset_name"], record["instrument_name"]
+            )
+            group_counts[group] += 1
+        except (KeyError, TypeError, ValueError) as exc:
+            errors.append(f"{label}: {exc}")
+    if len(ids) != len(set(ids)):
+        errors.append(f"{path}: duplicate record_id")
+    expected_record_ids = set(expected_record_families)
+    missing = sorted(expected_record_ids - set(ids))
+    extra = sorted(set(ids) - expected_record_ids)
+    if missing:
+        errors.append(f"{path}: missing record_id values: {missing}")
+    if extra:
+        errors.append(f"{path}: extra record_id values: {extra}")
+    if errors:
+        raise ValueError("metadata validation failed:\n" + "\n".join(errors))
+    return {
+        "rows": len(records),
+        "instrument_groups": dict(sorted(group_counts.items())),
+    }
+
+
 def validate_testset(testset_root: Path, expected_rows: int = 400) -> dict[str, Any]:
     errors: list[str] = []
     summary: dict[str, Any] = {}
     for benchmark in BENCHMARKS:
         benchmark_summary: dict[str, Any] = {}
+        benchmark_record_families: dict[str, str] = {}
         for task in TASKS:
             path = testset_root / benchmark / f"benchmark_{task}.jsonl"
             records = read_jsonl(path)
@@ -220,11 +287,21 @@ def validate_testset(testset_root: Path, expected_rows: int = 400) -> dict[str, 
                         f"extra={sorted(actual_keys - expected_keys)}"
                     )
                     continue
+                record_id: str | None = None
                 try:
-                    checked_record_id(record["record_id"])
+                    record_id = checked_record_id(record["record_id"])
                 except ValueError as exc:
                     errors.append(f"{label}: {exc}")
                 family = str(record["family"])
+                if record_id is not None:
+                    previous_family = benchmark_record_families.get(record_id)
+                    if previous_family is not None and previous_family != family:
+                        errors.append(
+                            f"{label}: family mismatch across tasks; "
+                            f"previous={previous_family!r}, current={family!r}"
+                        )
+                    else:
+                        benchmark_record_families[record_id] = family
                 family_counts[family] += 1
                 if family not in FAMILIES:
                     errors.append(f"{label}: unknown family: {family}")
@@ -242,6 +319,14 @@ def validate_testset(testset_root: Path, expected_rows: int = 400) -> dict[str, 
                 "rows": len(records),
                 "families": dict(sorted(family_counts.items())),
             }
+        try:
+            benchmark_summary["metadata"] = validate_benchmark_metadata(
+                testset_root / benchmark,
+                benchmark_record_families,
+                expected_rows=expected_rows,
+            )
+        except (OSError, ValueError) as exc:
+            errors.append(str(exc))
         summary[benchmark] = benchmark_summary
     if errors:
         raise ValueError("test-set validation failed:\n" + "\n".join(errors[:100]))

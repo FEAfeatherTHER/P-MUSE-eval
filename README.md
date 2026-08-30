@@ -11,10 +11,10 @@ It reports two metrics:
 2. Onset F1. Onsets must be within 50 ms and have the exact MIDI pitch by
    default.
 
-Generated audio is transcribed with MuScriptor `large`. The known benchmark
-family is used as a hard transcription constraint: piano allows acoustic and
-electric piano, guitar allows acoustic/clean electric/distorted electric
-guitar, bass allows acoustic and electric bass, and drum allows drums only.
+Generated audio is transcribed with MuScriptor `large`. Each record's `family`,
+`dataset_name`, and `instrument_name` in `metadata.jsonl` select exactly one
+MuScriptor instrument group, preventing a single-instrument recording from
+being decoded into duplicate acoustic/electric tracks.
 
 ## Installation
 

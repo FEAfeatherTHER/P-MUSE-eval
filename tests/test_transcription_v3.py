@@ -8,26 +8,24 @@ from pmuse_eval import transcription
 
 
 class InstrumentConstraintTest(unittest.TestCase):
-    def test_family_maps_to_all_relevant_muscriptor_groups(self) -> None:
-        mapper = getattr(transcription, "instrument_groups_for_family", None)
-        self.assertIsNotNone(mapper, "MuScriptor family mapping is missing")
-        self.assertEqual(
-            mapper("piano"),
-            ("acoustic_piano", "electric_piano"),
-        )
-        self.assertEqual(
-            mapper("guitar"),
-            (
-                "acoustic_guitar",
-                "clean_electric_guitar",
-                "distorted_electric_guitar",
-            ),
-        )
-        self.assertEqual(
-            mapper("bass"),
-            ("acoustic_bass", "electric_bass"),
-        )
-        self.assertEqual(mapper("drum"), ("drums",))
+    def test_metadata_maps_to_one_muscriptor_group(self) -> None:
+        mapper = getattr(transcription, "instrument_group_for_record", None)
+        self.assertIsNotNone(mapper, "MuScriptor instrument mapping is missing")
+        cases = [
+            ("piano", "nsynth", "keyboard_acoustic_009", "acoustic_piano"),
+            ("piano", "nsynth", "keyboard_electronic_005", "electric_piano"),
+            ("piano", "slakh", "Clavinet", "acoustic_piano"),
+            ("guitar", "guitarset", "acoustic guitar", "acoustic_guitar"),
+            ("guitar", "SynthTab", "gibson_thumb", "clean_electric_guitar"),
+            ("guitar", "nsynth", "guitar_electronic_021", "clean_electric_guitar"),
+            ("bass", "nsynth", "bass_electronic_002", "electric_bass"),
+            ("bass", "slakh", "Fretless Bass", "acoustic_bass"),
+            ("bass", "slakh", "Slap Bass 2", "electric_bass"),
+            ("drum", "e-gmd", "60s Rock", "drums"),
+        ]
+        for family, dataset, instrument, expected in cases:
+            with self.subTest(instrument=instrument):
+                self.assertEqual(mapper(family, dataset, instrument), expected)
 
 
 class LocalCheckpointTest(unittest.TestCase):
@@ -51,10 +49,10 @@ class LocalCheckpointTest(unittest.TestCase):
 
 
 class MuScriptorMidiWriterTest(unittest.TestCase):
-    def test_writes_postprocessed_midi_with_family_constraint(self) -> None:
+    def test_writes_postprocessed_midi_with_instrument_constraint(self) -> None:
         transcriber = transcription.transcribe_audio
-        if "family" not in inspect.signature(transcriber).parameters:
-            self.fail("MuScriptor transcriber must accept the benchmark family")
+        if "instrument_group" not in inspect.signature(transcriber).parameters:
+            self.fail("MuScriptor transcriber must accept one instrument group")
 
         class FakeModel:
             def __init__(self) -> None:
@@ -71,7 +69,7 @@ class MuScriptorMidiWriterTest(unittest.TestCase):
             midi_path = root / "nested" / "sample.mid"
             model = FakeModel()
 
-            transcriber(model, audio_path, midi_path, "guitar")
+            transcriber(model, audio_path, midi_path, "clean_electric_guitar")
 
             self.assertEqual(midi_path.read_bytes(), b"MThd-muscriptor")
             self.assertFalse(midi_path.with_name(".sample.mid.tmp").exists())
@@ -83,11 +81,7 @@ class MuScriptorMidiWriterTest(unittest.TestCase):
                 "use_sampling": False,
                 "temperature": 1.0,
                 "cfg_coef": 1.0,
-                "instruments": [
-                    "acoustic_guitar",
-                    "clean_electric_guitar",
-                    "distorted_electric_guitar",
-                ],
+                "instruments": ["clean_electric_guitar"],
                 "batch_size": 1,
                 "no_eos_is_ok": True,
                 "beam_size": 1,
@@ -98,7 +92,7 @@ class MuScriptorMidiWriterTest(unittest.TestCase):
 
 
 class BenchmarkTranscriptionTest(unittest.TestCase):
-    def test_loads_model_once_and_reuses_family_aware_cache(self) -> None:
+    def test_loads_model_once_and_reuses_instrument_aware_cache(self) -> None:
         api = transcription.transcribe_benchmark
         parameters = inspect.signature(api).parameters
         if "model_source" not in parameters:
@@ -114,6 +108,24 @@ class BenchmarkTranscriptionTest(unittest.TestCase):
             ]
             (benchmark_root / "benchmark_gen.jsonl").write_text(
                 "".join(json.dumps(record) + "\n" for record in records),
+                encoding="utf-8",
+            )
+            metadata = [
+                {
+                    "record_id": "piano_sample",
+                    "family": "piano",
+                    "dataset_name": "nsynth",
+                    "instrument_name": "keyboard_acoustic_009",
+                },
+                {
+                    "record_id": "drum_sample",
+                    "family": "drum",
+                    "dataset_name": "e-gmd",
+                    "instrument_name": "60s Rock",
+                },
+            ]
+            (benchmark_root / "metadata.jsonl").write_text(
+                "".join(json.dumps(record) + "\n" for record in metadata),
                 encoding="utf-8",
             )
             submission = root / "submission" / "benchmark_style" / "gen"
@@ -137,11 +149,13 @@ class BenchmarkTranscriptionTest(unittest.TestCase):
                 loader_calls.append((path, device))
                 return object()
 
-            def write_midi(model, audio_path: Path, midi_path: Path, family: str) -> None:
+            def write_midi(
+                model, audio_path: Path, midi_path: Path, instrument_group: str,
+            ) -> None:
                 self.assertIsNotNone(model)
-                transcriber_calls.append(family)
+                transcriber_calls.append(instrument_group)
                 midi_path.parent.mkdir(parents=True, exist_ok=True)
-                midi_path.write_bytes(family.encode())
+                midi_path.write_bytes(instrument_group.encode())
 
             first = api(
                 testset_root=root / "testset",
@@ -175,14 +189,14 @@ class BenchmarkTranscriptionTest(unittest.TestCase):
             ]
 
         self.assertEqual(loader_calls, [(checkpoint, "cpu")])
-        self.assertEqual(transcriber_calls, ["piano", "drum"])
+        self.assertEqual(transcriber_calls, ["acoustic_piano", "drums"])
         self.assertEqual([item["status"] for item in first], ["ok", "ok"])
         self.assertEqual([item["status"] for item in second], ["cached", "cached"])
         self.assertEqual(
             [item["instrument_groups"] for item in cache],
             [
                 ["drums"],
-                ["acoustic_piano", "electric_piano"],
+                ["acoustic_piano"],
             ],
         )
         self.assertTrue(all(item["model_source"] == "large" for item in cache))
@@ -196,6 +210,15 @@ class BenchmarkTranscriptionTest(unittest.TestCase):
                 json.dumps({"record_id": "sample", "family": "piano"}) + "\n",
                 encoding="utf-8",
             )
+            (benchmark_root / "metadata.jsonl").write_text(
+                json.dumps({
+                    "record_id": "sample",
+                    "family": "piano",
+                    "dataset_name": "nsynth",
+                    "instrument_name": "keyboard_electronic_005",
+                }) + "\n",
+                encoding="utf-8",
+            )
             submission = root / "submission" / "benchmark_paired" / "gen"
             submission.mkdir(parents=True)
             (submission / "sample.wav").write_bytes(b"audio")
@@ -206,8 +229,8 @@ class BenchmarkTranscriptionTest(unittest.TestCase):
             config.write_text('{"revision": 1}', encoding="utf-8")
             transcriber_calls: list[str] = []
 
-            def write_midi(model, audio_path, midi_path, family):
-                transcriber_calls.append(family)
+            def write_midi(model, audio_path, midi_path, instrument_group):
+                transcriber_calls.append(instrument_group)
                 midi_path.parent.mkdir(parents=True, exist_ok=True)
                 midi_path.write_bytes(b"midi")
 
@@ -226,7 +249,7 @@ class BenchmarkTranscriptionTest(unittest.TestCase):
             config.write_text('{"revision": 2}', encoding="utf-8")
             transcription.transcribe_benchmark(**arguments)
 
-        self.assertEqual(transcriber_calls, ["piano", "piano"])
+        self.assertEqual(transcriber_calls, ["electric_piano", "electric_piano"])
 
 
 if __name__ == "__main__":
