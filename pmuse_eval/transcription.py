@@ -36,7 +36,7 @@ TRANSCRIPTION_CONFIG = {
     "cfg_coef": 1.0,
     "batch_size": 1,
     "prelude_forcing": True,
-    "detect_tempo": "best-effort",
+    "detect_tempo": False,
 }
 
 
@@ -226,7 +226,7 @@ def transcribe_audio(
         no_eos_is_ok=True,
         beam_size=1,
         prelude_forcing=True,
-        detect_tempo="best-effort",
+        detect_tempo=False,
     )
     midi_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_midi = midi_path.with_name(f".{midi_path.name}.tmp")

@@ -15,6 +15,8 @@ Generated audio is transcribed with MuScriptor `large`. Each record's `family`,
 `dataset_name`, and `instrument_name` in `metadata.jsonl` select exactly one
 MuScriptor instrument group, preventing a single-instrument recording from
 being decoded into duplicate acoustic/electric tracks.
+Tempo detection is disabled to preserve predicted note times. Transcriptions
+cached with tempo detection enabled are regenerated on the next transcription run.
 
 ## Installation
 
